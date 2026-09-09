@@ -17,8 +17,8 @@ const fillBothBtn = document.getElementById('fillBothBtn');
 const fillDirValue = document.getElementById('fillDirValue');
 
 const refillPulseBtn = document.getElementById('refillPulseBtn');
-const fill1Toggle = document.getElementById('fill1Toggle');
-const fill2Toggle = document.getElementById('fill2Toggle');
+const fill1PulseBtn = document.getElementById('fill1PulseBtn');
+const fill2PulseBtn = document.getElementById('fill2PulseBtn');
 
 const stockValue = document.getElementById('stockValue');
 const fill1Value = document.getElementById('fill1Value');
@@ -48,10 +48,6 @@ let cameraReady = false;
 
 let isConnected = false;
 
-// Local cache for the write-only bits (M153/154/155) so the toggle reflects
-// what we last commanded, since these are write-only on the PLC side.
-const bitState = { fill1: false, fill2: false };
-
 function getConfig() {
   return {
     ip: document.getElementById('ip').value.trim(),
@@ -72,11 +68,8 @@ function setConnectedUI(connected) {
   connectBtn.disabled = connected;
   disconnectBtn.disabled = !connected;
 
-  [startBtn, stopBtn, qtySetBtn, fillOneBtn, fillTwoBtn, fillBothBtn, oeeOpenBtn, refillPulseBtn].forEach((btn) => {
+  [startBtn, stopBtn, qtySetBtn, fillOneBtn, fillTwoBtn, fillBothBtn, oeeOpenBtn, refillPulseBtn, fill1PulseBtn, fill2PulseBtn].forEach((btn) => {
     btn.disabled = !connected;
-  });
-  [fill1Toggle, fill2Toggle].forEach((toggle) => {
-    toggle.disabled = !connected;
   });
 
   if (!connected) {
@@ -158,44 +151,33 @@ fillBothBtn.addEventListener('click', async () => {
 // Bit controls
 // ---------------------------------------------------------------------------
 
-// Stock Refill (M153) is momentary — click pulses it HIGH briefly then
-// back LOW, same pattern as Stop/Reset, instead of a persistent toggle.
-refillPulseBtn.addEventListener('click', async () => {
-  showError('');
-  refillPulseBtn.disabled = true;
-  try {
-    let result = await window.plcAPI.writeBit('refill', 1);
-    if (!result.ok) {
-      showError(`Stock Refill pulse failed: ${result.error}`);
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    result = await window.plcAPI.writeBit('refill', 0);
-    if (!result.ok) {
-      showError(`Stock Refill release failed: ${result.error}`);
-    }
-  } finally {
-    refillPulseBtn.disabled = !isConnected;
-  }
-});
-
-// Filling One (M154) / Filling Two (M155) — write-only 0/1, still toggles.
-function bindBitToggle(toggleEl, target) {
-  toggleEl.addEventListener('change', async () => {
+// All three (Stock Refill / Filling One / Filling Two) are momentary —
+// click pulses the bit HIGH briefly then back LOW, same pattern as
+// Stop/Reset, rather than a persistent toggle state.
+function bindPulseButton(btnEl, target, label, pulseMs = 500) {
+  btnEl.addEventListener('click', async () => {
     showError('');
-    const value = toggleEl.checked ? 1 : 0;
-    const result = await window.plcAPI.writeBit(target, value);
-    if (!result.ok) {
-      showError(`Write ${target} failed: ${result.error}`);
-      toggleEl.checked = !toggleEl.checked; // revert on failure
-      return;
+    btnEl.disabled = true;
+    try {
+      let result = await window.plcAPI.writeBit(target, 1);
+      if (!result.ok) {
+        showError(`${label} pulse failed: ${result.error}`);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, pulseMs));
+      result = await window.plcAPI.writeBit(target, 0);
+      if (!result.ok) {
+        showError(`${label} release failed: ${result.error}`);
+      }
+    } finally {
+      btnEl.disabled = !isConnected;
     }
-    bitState[target] = !!value;
   });
 }
 
-bindBitToggle(fill1Toggle, 'fill1');
-bindBitToggle(fill2Toggle, 'fill2');
+bindPulseButton(refillPulseBtn, 'refill', 'Stock Refill');
+bindPulseButton(fill1PulseBtn, 'fill1', 'Filling One');
+bindPulseButton(fill2PulseBtn, 'fill2', 'Filling Two');
 
 // ---------------------------------------------------------------------------
 // Camera: request the webcam once at startup, keep the <video> element fed.
@@ -399,10 +381,14 @@ async function refreshOEE() {
   renderGauge(gaugeQuality, result.quality, '#173681');
   renderGauge(gaugeOEE, result.oee, '#173681');
 
-  availabilityValueEl.textContent = result.availability;
-  performanceValueEl.textContent = result.performance;
-  qualityValueEl.textContent = result.quality;
-  oeeValueEl.textContent = result.oee;
+  // toFixed(2) here (not just at the main.js source) guarantees exactly
+  // 2 decimal places on screen even when the value is a whole number —
+  // JS numbers drop trailing zeros (91.30 becomes 91.3, 100.00 becomes
+  // 100) unless formatted as a string at display time.
+  availabilityValueEl.textContent = Number(result.availability).toFixed(2);
+  performanceValueEl.textContent = Number(result.performance).toFixed(2);
+  qualityValueEl.textContent = Number(result.quality).toFixed(2);
+  oeeValueEl.textContent = Number(result.oee).toFixed(2);
   idealRunTimeValueEl.textContent = result.idealRunTime;
   actualRunTimeValueEl.textContent = result.actualRunTime;
   performanceLossValueEl.textContent = result.performanceLoss;

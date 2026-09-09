@@ -1,6 +1,7 @@
 {
-  "name": "filling-machine-hmi",
-  "version": "2.0.0",
+  "name": "mes-training-workbench",
+  "productName": "Manufacturing Execution System (MES) Training WorkBench",
+  "version": "2.1.0",
   "description": "Electron HMI for the filling machine — Modbus TCP control of start/stop, quantity, filling direction, stock refill, status/RFID readback, OEE dashboard, and a rule-based (no training required) red/blue ball fill detector that pulses M69 for 1s on a rejected/empty capture. The fill detector runs as a compiled standalone exe (scripts/dist/analyze_box.exe, built with PyInstaller — see scripts/BUILD_STANDALONE_EXE.md) with no Python install required on the target machine; falls back to spawning system Python only if that exe is missing.",
   "main": "main.js",
   "scripts": {
@@ -8,7 +9,7 @@
     "build": "electron-builder",
     "dist": "electron-builder"
   },
-  "author": "Suyash Gautam",
+  "author": "STPL",
   "license": "MIT",
   "dependencies": {
     "modbus-serial": "^8.0.16"
@@ -18,8 +19,8 @@
     "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId": "com.scientech.fillingmachinehmi",
-    "productName": "Filling Machine HMI",
+    "appId": "com.scientech.mestrainingworkbench",
+    "productName": "Manufacturing Execution System (MES) Training WorkBench",
     "asar": false,
     "files": [
       "main.js",
@@ -41,10 +42,19 @@
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "logo.ico"
+    },
+    "nsis": {
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "shortcutName": "${productName}",
+      "uninstallDisplayName": "${productName}",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     },
     "linux": {
-      "target": "AppImage"
+      "target": "AppImage",
+      "icon": "build/icon.png"
     }
   }
 }

@@ -101,14 +101,19 @@ const ADDR = {
   QUALITY_D904: 904,
   OEE_D906: 906,
   OEE_RESET_M156: 156, // write-only pulse — ASSUMED address, adjust if wrong
+  OEE_RESET_M160: 160, // write-only pulse, HIGH for 1s, fired alongside M156 on Reset click
 };
 
 function scaleTime(raw) {
   return Number((raw / 10).toFixed(1));
 }
 
+// Percent fields (Availability/Performance/Quality/OEE): previously
+// raw/100. Per request, an additional ×100 is applied on top of that —
+// net effect is the raw register value is now displayed directly,
+// formatted to 2 decimal places, with no division at all.
 function scalePercent(raw) {
-  return Number((raw / 100).toFixed(2));
+  return Number(((raw / 100) * 100).toFixed(2));
 }
 
 // Minimum time between two captures, even if M57 pulses again immediately.
@@ -192,7 +197,9 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      devTools: false
     },
+    icon: path.join(__dirname, 'logo.ico')
   });
 
   mainWindow.setMenuBarVisibility(false);
@@ -481,10 +488,12 @@ ipcMain.handle('modbus:readOEE', async () => {
 });
 
 // Momentary pulse, same pattern as Stop — write 1 then release after 300ms.
+// Also pulses M160 HIGH for exactly 1 second, in parallel.
 ipcMain.handle('modbus:resetOEE', async () => {
   if (!client.isOpen) return { ok: false, error: 'Not connected to PLC' };
   try {
     await mbWriteCoil(ADDR.OEE_RESET_M156, true);
+    pulseM160(); // fire-and-forget, runs alongside the M156 pulse below
     await new Promise((resolve) => setTimeout(resolve, 300));
     await mbWriteCoil(ADDR.OEE_RESET_M156, false);
     return { ok: true };
@@ -492,6 +501,16 @@ ipcMain.handle('modbus:resetOEE', async () => {
     return { ok: false, error: err.message };
   }
 });
+
+async function pulseM160() {
+  try {
+    await mbWriteCoil(ADDR.OEE_RESET_M160, true);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await mbWriteCoil(ADDR.OEE_RESET_M160, false);
+  } catch (err) {
+    console.error('pulseM160 failed:', err.message);
+  }
+}
 
 // Pulses M69 HIGH for 1 second whenever a capture is classified "empty"/bad.
 // Fire-and-forget: called without awaiting, so a bad-image reject signal
