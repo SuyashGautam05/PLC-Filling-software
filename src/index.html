@@ -124,6 +124,12 @@
       <!-- Camera / vision -->
       <section class="card wide">
         <h2>Camera (M57 Trigger) &amp; Fill Detection</h2>
+
+        <!-- Big, unmissable pass/fail banner — updates the instant a
+             capture finishes analyzing, regardless of what M57 is doing
+             by then (analysis is async, so M57 may already be back LOW). -->
+        <div id="resultBanner" class="result-banner idle">Waiting for first capture...</div>
+
         <div class="camera-status-row">
           <span>M57 state:</span>
           <span id="m57Indicator" class="pill off">LOW</span>

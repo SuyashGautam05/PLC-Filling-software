@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const fsp = fs.promises;
 const { spawn } = require('child_process');
 const ModbusRTU = require('modbus-serial');
 
@@ -85,42 +86,29 @@ const ADDR = {
   CAMERA_TRIGGER_M57: 57, // Camera trigger, read-only
   BAD_IMAGE_M69: 69, // Write-only coil. Pulsed HIGH for 1s when a capture is classified "empty"/bad.
 
-  // OEE Dashboard — each value spans 2 consecutive registers, decoded as
-  // a 32-bit IEEE-754 float (see registerPairToFloat32 below), not a
-  // single scaled integer. Delta AS-series ISPSoft projects that compute
-  // percentages/times via math blocks typically store the result as a
-  // native REAL (float) across a D-register pair, which matches what the
-  // PLC's own screen shows (e.g. "49.25", "100.00" — genuine decimals,
-  // not a display-only scale trick).
-  ACTUAL_RUN_D20: 20, // read-only, float32 across D20-D21
-  DOWNTIME_D22: 22, // read-only, float32 across D22-D23
-  PERF_LOSS_D24: 24, // read-only, float32 across D24-D25
-  IDEAL_RUN_D26: 26, // read-only, float32 across D26-D27
-  AVAILABILITY_D69: 69, // read-only, float32 across D69-D70
-  PERFORMANCE_D87: 87, // read-only, float32 across D87-D88
-  QUALITY_D104: 104, // read-only, float32 across D104-D105
-  OEE_D150: 150, // read-only, float32 across D150-D151
+  // OEE Dashboard — each value is a SINGLE 16-bit integer register (not
+  // float32). Scaling:
+  //   - Time fields (Actual Run, Down Time, Performance Loss, Ideal Run):
+  //     raw / 10, one decimal place — e.g. raw 123 displays as 12.3.
+  //   - Percent fields (Availability, Performance, Quality, OEE):
+  //     raw / 100, two decimal places — e.g. raw 4925 displays as 49.25.
+  ACTUAL_RUN_D20: 20,
+  DOWNTIME_D22: 22,
+  PERF_LOSS_D24: 24,
+  IDEAL_RUN_D26: 26,
+  AVAILABILITY_D900: 900,
+  PERFORMANCE_D902: 902,
+  QUALITY_D904: 904,
+  OEE_D906: 906,
   OEE_RESET_M156: 156, // write-only pulse — ASSUMED address, adjust if wrong
 };
 
-// Which of the 2 registers holds the high vs low 16 bits of the 32-bit
-// float. Delta PLCs commonly store the LOW word first (opposite of
-// strict Modbus big-endian convention) — that's the default here. If the
-// OEE dashboard shows garbled/wildly wrong numbers, flip this to false
-// and report what you see so it can be calibrated precisely (same
-// approach used for the status-text byte order earlier).
-const OEE_LOW_WORD_FIRST = true;
+function scaleTime(raw) {
+  return Number((raw / 10).toFixed(1));
+}
 
-function registerPairToFloat32(reg0, reg1, lowWordFirst) {
-  const buf = Buffer.alloc(4);
-  if (lowWordFirst) {
-    buf.writeUInt16BE(reg1, 0); // high word
-    buf.writeUInt16BE(reg0, 2); // low word
-  } else {
-    buf.writeUInt16BE(reg0, 0); // high word
-    buf.writeUInt16BE(reg1, 2); // low word
-  }
-  return buf.readFloatBE(0);
+function scalePercent(raw) {
+  return Number((raw / 100).toFixed(2));
 }
 
 // Minimum time between two captures, even if M57 pulses again immediately.
@@ -135,13 +123,32 @@ const ANALYZER_SCRIPT = path.join(__dirname, 'scripts', 'analyze_box.py');
 // Compiled standalone analyzer (see scripts/BUILD_STANDALONE_EXE.md for how
 // to produce this with PyInstaller). If this exists, it's used INSTEAD of
 // spawning system Python — the app then needs zero external dependencies
-// on the target machine. Checked in this order:
-//   1. Packaged app: resources/analyze_box.exe (via extraResources)
-//   2. Dev/unpackaged: scripts/dist/analyze_box.exe (PyInstaller's default
-//      output location when run from the scripts/ folder)
-const COMPILED_ANALYZER_EXE = app.isPackaged
-  ? path.join(process.resourcesPath, 'analyze_box.exe')
-  : path.join(__dirname, 'scripts', 'dist', 'analyze_box.exe');
+// on the target machine. Checked in this order (first match wins):
+//   1. Packaged app, --onedir build: resources/analyze_box/analyze_box.exe
+//   2. Packaged app, --onefile build: resources/analyze_box.exe
+//   3. Dev, --onedir build: scripts/dist/analyze_box/analyze_box.exe
+//   4. Dev, --onefile build: scripts/dist/analyze_box.exe
+//
+// Prefer --onedir over --onefile: a --onefile exe re-extracts the ENTIRE
+// bundled Python+OpenCV runtime to a temp folder on every single launch,
+// which is most of what "the image processing feels slow" usually is —
+// not the actual analysis. --onedir ships the same files already
+// unpacked, so each capture just runs the exe directly with no
+// extraction step. Rebuild with:
+//   python -m PyInstaller --onedir --name analyze_box analyze_box.py
+function resolveCompiledAnalyzerExe() {
+  const candidates = app.isPackaged
+    ? [
+        path.join(process.resourcesPath, 'analyze_box', 'analyze_box.exe'),
+        path.join(process.resourcesPath, 'analyze_box.exe'),
+      ]
+    : [
+        path.join(__dirname, 'scripts', 'dist', 'analyze_box', 'analyze_box.exe'),
+        path.join(__dirname, 'scripts', 'dist', 'analyze_box.exe'),
+      ];
+  return candidates.find((p) => fs.existsSync(p)) || candidates[candidates.length - 1];
+}
+const COMPILED_ANALYZER_EXE = resolveCompiledAnalyzerExe();
 
 // Try 'py' (the Windows Python Launcher) first — it's installed by the
 // official python.org installer at a fixed system location and is NOT
@@ -447,29 +454,26 @@ ipcMain.handle('modbus:readOEE', async () => {
   if (!client.isOpen) return { ok: false, error: 'Not connected to PLC' };
   try {
     const [actualRes, downRes, perfLossRes, idealRes, availRes, perfRes, qualRes, oeeRes] = await Promise.all([
-      mbReadHoldingRegisters(ADDR.ACTUAL_RUN_D20, 2),
-      mbReadHoldingRegisters(ADDR.DOWNTIME_D22, 2),
-      mbReadHoldingRegisters(ADDR.PERF_LOSS_D24, 2),
-      mbReadHoldingRegisters(ADDR.IDEAL_RUN_D26, 2),
-      mbReadHoldingRegisters(ADDR.AVAILABILITY_D69, 2),
-      mbReadHoldingRegisters(ADDR.PERFORMANCE_D87, 2),
-      mbReadHoldingRegisters(ADDR.QUALITY_D104, 2),
-      mbReadHoldingRegisters(ADDR.OEE_D150, 2),
+      mbReadHoldingRegisters(ADDR.ACTUAL_RUN_D20, 1),
+      mbReadHoldingRegisters(ADDR.DOWNTIME_D22, 1),
+      mbReadHoldingRegisters(ADDR.PERF_LOSS_D24, 1),
+      mbReadHoldingRegisters(ADDR.IDEAL_RUN_D26, 1),
+      mbReadHoldingRegisters(ADDR.AVAILABILITY_D900, 1),
+      mbReadHoldingRegisters(ADDR.PERFORMANCE_D902, 1),
+      mbReadHoldingRegisters(ADDR.QUALITY_D904, 1),
+      mbReadHoldingRegisters(ADDR.OEE_D906, 1),
     ]);
-
-    const toFloat = (res) => registerPairToFloat32(res.data[0], res.data[1], OEE_LOW_WORD_FIRST);
-    const round2 = (v) => Number(v.toFixed(2));
 
     return {
       ok: true,
-      actualRunTime: round2(toFloat(actualRes)),
-      downTime: round2(toFloat(downRes)),
-      performanceLoss: round2(toFloat(perfLossRes)),
-      idealRunTime: round2(toFloat(idealRes)),
-      availability: round2(toFloat(availRes)),
-      performance: round2(toFloat(perfRes)),
-      quality: round2(toFloat(qualRes)),
-      oee: round2(toFloat(oeeRes)),
+      actualRunTime: scaleTime(actualRes.data[0]),
+      downTime: scaleTime(downRes.data[0]),
+      performanceLoss: scaleTime(perfLossRes.data[0]),
+      idealRunTime: scaleTime(idealRes.data[0]),
+      availability: scalePercent(availRes.data[0]),
+      performance: scalePercent(perfRes.data[0]),
+      quality: scalePercent(qualRes.data[0]),
+      oee: scalePercent(oeeRes.data[0]),
     };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -529,12 +533,12 @@ async function writeRegisterSafe(address, value) {
 ipcMain.handle('camera:saveImage', async (event, dataUrl) => {
   try {
     if (!fs.existsSync(CAPTURE_DIR)) {
-      fs.mkdirSync(CAPTURE_DIR, { recursive: true });
+      await fsp.mkdir(CAPTURE_DIR, { recursive: true });
     }
     const base64 = dataUrl.replace(/^data:image\/png;base64,/, '');
     const filename = `capture_${Date.now()}.png`;
     const filePath = path.join(CAPTURE_DIR, filename);
-    fs.writeFileSync(filePath, base64, 'base64');
+    await fsp.writeFile(filePath, base64, 'base64');
 
     const analysis = await analyzeImage(filePath);
 

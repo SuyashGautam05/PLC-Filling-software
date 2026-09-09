@@ -149,11 +149,27 @@ def analyze_fill(img):
     return largest_pct, ball_detected, red_count, blue_count, None
 
 
+# Downscale before analysis — this is a threshold/blob check, not fine
+# detail work, so full webcam resolution (often 1080p+) just costs time
+# for no accuracy benefit. All thresholds calibrated so far were
+# percentage/ratio-based, so they hold up fine after resizing.
+ANALYSIS_MAX_WIDTH = 640
+
+
+def resize_for_analysis(img):
+    h, w = img.shape[:2]
+    if w <= ANALYSIS_MAX_WIDTH:
+        return img
+    scale = ANALYSIS_MAX_WIDTH / w
+    return cv2.resize(img, (ANALYSIS_MAX_WIDTH, int(h * scale)), interpolation=cv2.INTER_AREA)
+
+
 def main(image_path):
     img = cv2.imread(image_path)
     if img is None:
         print(json.dumps({"error": f"Could not read image: {image_path}"}))
         return
+    img = resize_for_analysis(img)
 
     largest_pct, ball_detected, red_count, blue_count, note = analyze_fill(img)
 

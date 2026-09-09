@@ -364,6 +364,39 @@ button:disabled {
   font-weight: 600;
 }
 
+.result-banner {
+  font-size: 20px;
+  font-weight: 800;
+  text-align: center;
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  letter-spacing: 0.5px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.result-banner.idle {
+  background: var(--primary-soft);
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.result-banner.good {
+  background: var(--success);
+  color: #ffffff;
+}
+
+.result-banner.bad {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.result-banner.unknown {
+  background: #34406e;
+  color: #ffffff;
+}
+
 .camera-status-row {
   display: flex;
   align-items: center;

@@ -28,6 +28,7 @@ const statusValue = document.getElementById('statusValue');
 
 const m57Indicator = document.getElementById('m57Indicator');
 const captureLog = document.getElementById('captureLog');
+const resultBanner = document.getElementById('resultBanner');
 const lastCaptureImg = document.getElementById('lastCaptureImg');
 const cameraVideo = document.getElementById('cameraVideo');
 const captureCanvas = document.getElementById('captureCanvas');
@@ -246,6 +247,8 @@ async function captureImage() {
       unknownCountEl.textContent = result.counts.unknown;
     }
 
+    updateResultBanner(result.classification);
+
     // Analysis errors/notes go in captureLog, NOT the shared error banner —
     // the dashboard poll clears that banner every ~800ms, so a real error
     // here would flash and disappear before it could ever be read.
@@ -258,6 +261,20 @@ async function captureImage() {
     }
   } else {
     captureLog.textContent = `Capture #${captureCount} taken, but save failed: ${result.error}`;
+  }
+}
+
+function updateResultBanner(classification) {
+  resultBanner.classList.remove('idle', 'good', 'bad', 'unknown');
+  if (classification === 'good') {
+    resultBanner.textContent = `✓ GOOD — Capture #${captureCount}: box filled correctly`;
+    resultBanner.classList.add('good');
+  } else if (classification === 'bad') {
+    resultBanner.textContent = `✗ REJECTED — Capture #${captureCount}: box empty`;
+    resultBanner.classList.add('bad');
+  } else {
+    resultBanner.textContent = `? UNKNOWN — Capture #${captureCount}: could not classify`;
+    resultBanner.classList.add('unknown');
   }
 }
 

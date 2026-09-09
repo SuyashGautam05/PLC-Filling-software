@@ -1,6 +1,6 @@
 {
-  "name": "plc-filling-software",
-  "version": "1.0.0",
+  "name": "filling-machine-hmi",
+  "version": "2.0.0",
   "description": "Electron HMI for the filling machine — Modbus TCP control of start/stop, quantity, filling direction, stock refill, status/RFID readback, OEE dashboard, and a rule-based (no training required) red/blue ball fill detector that pulses M69 for 1s on a rejected/empty capture. The fill detector runs as a compiled standalone exe (scripts/dist/analyze_box.exe, built with PyInstaller — see scripts/BUILD_STANDALONE_EXE.md) with no Python install required on the target machine; falls back to spawning system Python only if that exe is missing.",
   "main": "main.js",
   "scripts": {
@@ -36,8 +36,8 @@
     ],
     "extraResources": [
       {
-        "from": "scripts/dist/analyze_box.exe",
-        "to": "analyze_box.exe"
+        "from": "scripts/dist/analyze_box",
+        "to": "analyze_box"
       }
     ],
     "win": {
