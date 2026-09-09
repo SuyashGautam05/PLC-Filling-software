@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Filling Machine HMI</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Filling Machine &mdash; Control Panel</h1>
+      <div class="header-actions">
+        <button id="oeeOpenBtn" class="oee-btn" disabled>OEE Dashboard</button>
+        <div id="statusBadge" class="status disconnected">Disconnected</div>
+      </div>
+    </header>
+
+    <section class="config-panel">
+      <div class="field">
+        <label for="ip">PLC IP Address</label>
+        <input type="text" id="ip" value="192.168.0.190" />
+      </div>
+      <div class="field">
+        <label for="port">Port</label>
+        <input type="number" id="port" value="502" />
+      </div>
+      <div class="field">
+        <label for="slaveId">Slave ID</label>
+        <input type="number" id="slaveId" value="1" />
+      </div>
+      <div class="field">
+        <label for="interval">Poll Interval (ms)</label>
+        <input type="number" id="interval" value="200" />
+      </div>
+      <div class="field connect-actions">
+        <button id="connectBtn">Connect</button>
+        <button id="disconnectBtn" disabled>Disconnect</button>
+      </div>
+    </section>
+
+    <div class="grid">
+      <!-- Run controls -->
+      <section class="card">
+        <h2>Run Control</h2>
+        <div class="run-controls">
+          <button id="startBtn" class="btn-start" disabled>
+            <span class="dot" id="startDot"></span> START (M100)
+          </button>
+          <button id="stopBtn" class="btn-stop" disabled>STOP (M101)</button>
+        </div>
+        <p class="hint">Start blinks M100 while running. Stop pulses the M101 NC contact low for 1s.</p>
+      </section>
+
+      <!-- Quantity -->
+      <section class="card">
+        <h2>Quantity (D0)</h2>
+        <div class="qty-row">
+          <input type="number" id="qtyInput" min="1" max="5" value="1" />
+          <button id="qtySetBtn" disabled>Set</button>
+        </div>
+        <p class="hint">Allowed range: 1 &ndash; 5</p>
+      </section>
+
+      <!-- Filling direction -->
+      <section class="card">
+        <h2>Filling Direction (D2)</h2>
+        <div class="fill-dir-row">
+          <button id="fillOneBtn" disabled>Filling One (&minus;1)</button>
+          <button id="fillTwoBtn" disabled>Filling Two (+1)</button>
+          <button id="fillBothBtn" disabled>Filling Both (2)</button>
+        </div>
+        <p class="hint">Current D2 value: <span id="fillDirValue">--</span></p>
+      </section>
+
+      <!-- Bit controls -->
+      <section class="card">
+        <h2>Bit Controls</h2>
+        <div class="bit-row">
+          <span>Stock Refill (M153)</span>
+          <button id="refillPulseBtn" class="pulse-btn" disabled>PULSE</button>
+        </div>
+        <div class="bit-row">
+          <span>Filling One (M154)</span>
+          <label class="switch">
+            <input type="checkbox" id="fill1Toggle" disabled />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="bit-row">
+          <span>Filling Two (M155)</span>
+          <label class="switch">
+            <input type="checkbox" id="fill2Toggle" disabled />
+            <span class="slider"></span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Read-only readings -->
+      <section class="card wide">
+        <h2>Live Readings (Read-Only)</h2>
+        <div class="readings">
+          <div class="reading-cell">
+            <div class="reading-name">Container Stock (D11)</div>
+            <div class="reading-value" id="stockValue">--</div>
+          </div>
+          <div class="reading-cell">
+            <div class="reading-name">Filling One Level (D12)</div>
+            <div class="reading-value" id="fill1Value">--</div>
+          </div>
+          <div class="reading-cell">
+            <div class="reading-name">Filling Two Level (D13)</div>
+            <div class="reading-value" id="fill2Value">--</div>
+          </div>
+          <div class="reading-cell">
+            <div class="reading-name">RFID Tag (D50)</div>
+            <div class="reading-value" id="rfidValue">--</div>
+          </div>
+          <div class="reading-cell wide-cell">
+            <div class="reading-name">Status (D1000)</div>
+            <div class="reading-value" id="statusValue">--</div>
+          </div>
+        </div>
+      </section>
+      <!-- Camera / vision -->
+      <section class="card wide">
+        <h2>Camera (M57 Trigger) &amp; Fill Detection</h2>
+        <div class="camera-status-row">
+          <span>M57 state:</span>
+          <span id="m57Indicator" class="pill off">LOW</span>
+          <span id="captureLog">No captures yet.</span>
+        </div>
+
+        <div class="tally-row">
+          <div class="tally-cell good">
+            <div class="tally-label">Good (Filled)</div>
+            <div class="tally-value" id="goodCount">0</div>
+          </div>
+          <div class="tally-cell bad">
+            <div class="tally-label">Bad (Empty)</div>
+            <div class="tally-value" id="badCount">0</div>
+          </div>
+          <div class="tally-cell unknown">
+            <div class="tally-label">Unclassified</div>
+            <div class="tally-value" id="unknownCount">0</div>
+          </div>
+          <button id="resetCountsBtn" class="reset-btn">Reset Counts</button>
+        </div>
+
+        <div class="last-result-row">
+          <img id="lastCaptureImg" class="capture-preview" alt="Last capture" />
+          <div class="last-result-details">
+            <div>Fill status: <span id="lastFillStatus" class="badge">--</span> <span id="lastFillConfidence" class="hint"></span></div>
+            <div>Classification: <span id="lastClassification" class="badge">--</span></div>
+            <div>Balls detected — Red: <span id="lastRedBalls">--</span>, Blue: <span id="lastBlueBalls">--</span></div>
+          </div>
+        </div>
+
+        <video id="cameraVideo" autoplay muted playsinline style="display:none"></video>
+        <canvas id="captureCanvas" style="display:none"></canvas>
+      </section>
+    </div>
+
+    <section class="log">
+      <span id="lastUpdate">Last update: --</span>
+      <span id="errorMsg" class="error"></span>
+    </section>
+  </div>
+
+  <!-- OEE Dashboard popup -->
+  <div id="oeeOverlay" class="oee-overlay" style="display:none">
+    <div class="oee-modal">
+      <div class="oee-modal-header">
+        <h2>OEE Dashboard</h2>
+        <button id="oeeCloseBtn" class="oee-close-btn">BACK</button>
+      </div>
+
+      <div class="oee-gauges-row">
+        <div class="oee-gauge-block">
+          <svg id="gaugeAvailability" class="oee-gauge" viewBox="0 0 200 140"></svg>
+          <div class="oee-gauge-value" id="availabilityValue">--</div>
+          <div class="oee-gauge-label">AVAILABILITY</div>
+        </div>
+        <div class="oee-gauge-block">
+          <svg id="gaugePerformance" class="oee-gauge" viewBox="0 0 200 140"></svg>
+          <div class="oee-gauge-value" id="performanceValue">--</div>
+          <div class="oee-gauge-label">PERFORMANCE</div>
+        </div>
+        <div class="oee-gauge-block">
+          <svg id="gaugeQuality" class="oee-gauge" viewBox="0 0 200 140"></svg>
+          <div class="oee-gauge-value" id="qualityValue">--</div>
+          <div class="oee-gauge-label">QUALITY</div>
+        </div>
+      </div>
+
+      <div class="oee-stats-row">
+        <div class="oee-stat-column">
+          <div class="oee-stat-box">
+            <div class="oee-stat-label">IDEAL RUN TIME</div>
+            <div class="oee-stat-value" id="idealRunTimeValue">--</div>
+          </div>
+          <div class="oee-stat-box">
+            <div class="oee-stat-label">ACTUAL RUN TIME</div>
+            <div class="oee-stat-value" id="actualRunTimeValue">--</div>
+          </div>
+        </div>
+        <div class="oee-stat-column">
+          <div class="oee-stat-box">
+            <div class="oee-stat-label">PERFORMANCE LOSS</div>
+            <div class="oee-stat-value oee-stat-red" id="performanceLossValue">--</div>
+          </div>
+          <div class="oee-stat-box">
+            <div class="oee-stat-label">DOWN TIME</div>
+            <div class="oee-stat-value oee-stat-red" id="downTimeValue">--</div>
+          </div>
+        </div>
+        <div class="oee-oee-column">
+          <div class="oee-gauge-block">
+            <svg id="gaugeOEE" class="oee-gauge oee-gauge-big" viewBox="0 0 200 140"></svg>
+            <div class="oee-gauge-value oee-gauge-value-big" id="oeeValue">--</div>
+            <div class="oee-gauge-label">OEE</div>
+          </div>
+        </div>
+        <div class="oee-reset-column">
+          <div class="oee-stat-label">RESET</div>
+          <button id="oeeResetBtn" class="oee-reset-round-btn">RESET</button>
+        </div>
+      </div>
+
+      <div class="oee-modal-log">
+        <span id="oeeError" class="error"></span>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

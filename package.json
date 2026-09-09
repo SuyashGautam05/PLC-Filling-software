@@ -1,0 +1,50 @@
+{
+  "name": "plc-filling-software",
+  "version": "1.0.0",
+  "description": "Electron HMI for the filling machine — Modbus TCP control of start/stop, quantity, filling direction, stock refill, status/RFID readback, OEE dashboard, and a rule-based (no training required) red/blue ball fill detector that pulses M69 for 1s on a rejected/empty capture. The fill detector runs as a compiled standalone exe (scripts/dist/analyze_box.exe, built with PyInstaller — see scripts/BUILD_STANDALONE_EXE.md) with no Python install required on the target machine; falls back to spawning system Python only if that exe is missing.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "dist": "electron-builder"
+  },
+  "author": "Suyash Gautam",
+  "license": "MIT",
+  "dependencies": {
+    "modbus-serial": "^8.0.16"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.scientech.fillingmachinehmi",
+    "productName": "Filling Machine HMI",
+    "asar": false,
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "scripts/**/*",
+      "package.json",
+      "!scripts/training_data/**",
+      "!scripts/training_data_fill/**",
+      "!scripts/__pycache__/**",
+      "!scripts/dist/**",
+      "!scripts/build/**",
+      "!scripts/analyze_box.spec"
+    ],
+    "extraResources": [
+      {
+        "from": "scripts/dist/analyze_box.exe",
+        "to": "analyze_box.exe"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}
