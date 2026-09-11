@@ -44,15 +44,25 @@ header {
   align-items: center;
   justify-content: space-between;
   margin: 0 0 20px;
-  padding: 18px 24px;
+  padding: 12px 24px;
   background: var(--primary);
   border-bottom: 4px solid var(--accent);
+  gap: 20px;
 }
 
 .header-brand {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 0;
+}
+
+.brand-logo-img {
+  height: 40px;
+  width: auto;
+  /* max-width: 260px; */
+  max-width: 645px;
+  object-fit: contain;
 }
 
 .brand-logo {
@@ -78,7 +88,39 @@ header {
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.conn-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.conn-field label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.conn-field input {
+  padding: 6px 8px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text);
+  font-size: 13px;
+  width: 130px;
+}
+
+.conn-btn {
+  padding: 8px 14px;
+  font-size: 13px;
+  align-self: flex-end;
 }
 
 h1 {
@@ -115,49 +157,6 @@ h2 {
   border-color: var(--danger);
 }
 
-.config-panel {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  align-items: end;
-  background: var(--primary-soft);
-  border: 1px solid var(--primary-border);
-  padding: 18px;
-  border-radius: 10px;
-  margin-bottom: 20px;
-}
-
-.config-panel .field {
-  flex: 1;
-  min-width: 160px;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.field label {
-  font-size: 12px;
-  color: var(--text-dim);
-  font-weight: 600;
-}
-
-.field input {
-  padding: 8px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--primary-border);
-  background: #ffffff;
-  color: var(--text);
-  font-size: 14px;
-}
-
-.connect-actions {
-  flex-direction: row;
-  gap: 10px;
-}
-
 button {
   padding: 10px 16px;
   border: none;
@@ -184,21 +183,43 @@ button:disabled {
   cursor: not-allowed;
 }
 
+/* --------------------------------------------------------------------- */
+/* Dashboard layout: left sidebar (nav + run control + readings) +        */
+/* main content area (camera/vision) — replaces the old top-nav-then-     */
+/* stacked-grid arrangement.                                              */
+/* --------------------------------------------------------------------- */
+.dashboard-layout {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 300px;
+  flex-shrink: 0;
+}
+
+.main-panel {
+  flex: 1;
+  min-width: 0;
+}
+
 .section-nav {
   display: flex;
+  flex-direction: column;
   gap: 10px;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
 }
 
 .nav-btn {
   background: var(--primary);
   color: #ffffff;
-  padding: 12px 22px;
+  padding: 14px 18px;
   font-size: 14px;
   border-radius: 8px;
-  flex: 1;
-  min-width: 160px;
+  text-align: left;
 }
 
 .nav-btn:hover:not(:disabled) {
@@ -256,12 +277,6 @@ button:disabled {
   color: var(--text);
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 16px;
-}
-
 .card {
   background: var(--card-bg);
   border-radius: 10px;
@@ -291,7 +306,7 @@ button:disabled {
   gap: 8px;
   background: var(--success);
   color: #ffffff;
-  flex: 1;
+  /* flex: 1; */
   justify-content: center;
 }
 
@@ -348,6 +363,107 @@ button:disabled {
   flex: 1;
 }
 
+/* --------------------------------------------------------------------- */
+/* Filling direction bucket visualizations                                */
+/* --------------------------------------------------------------------- */
+
+.bucket-row {
+  display: flex;
+  justify-content: space-around;
+  gap: 20px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--primary-border);
+}
+
+.bucket-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.bucket-container {
+  position: relative;
+  width: 84px;
+  height: 110px;
+  background: #eef1fa;
+  border: 3px solid var(--primary);
+  border-top: none;
+  border-radius: 0 0 14px 14px;
+  /* Trapezoid bucket shape: narrower at the bottom, like a real pail. */
+  clip-path: polygon(8% 0%, 92% 0%, 100% 100%, 0% 100%);
+  overflow: hidden;
+}
+
+.bucket-container::before {
+  /* Bucket rim */
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: -4%;
+  right: -4%;
+  height: 6px;
+  background: var(--primary);
+  border-radius: 3px;
+}
+
+/* Balls pack in from the bottom of the bucket, like they've actually
+   dropped/settled in — new ones added on top as quantity increases. */
+.bucket-balls {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-wrap: wrap-reverse;
+  align-content: flex-start;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 6px 8px;
+}
+
+.ball {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: inset -2px -2px 3px rgba(0, 0, 0, 0.25), 0 1px 2px rgba(0, 0, 0, 0.3);
+  animation: ball-drop 0.35s ease-out;
+}
+
+.ball.red {
+  background: radial-gradient(circle at 32% 28%, #ff9a8b, var(--danger) 70%);
+}
+
+.ball.blue {
+  background: radial-gradient(circle at 32% 28%, #7ab8f5, #1e4fa8 70%);
+}
+
+/* "Filling Both" gets ONE ball, split diagonally red/blue, rather than
+   two separate balls — since only one ball is shown at a time. */
+.ball.mixed {
+  background:
+    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.35), transparent 60%),
+    linear-gradient(135deg, var(--danger) 0%, var(--danger) 49%, #1e4fa8 51%, #1e4fa8 100%);
+}
+
+@keyframes ball-drop {
+  from {
+    transform: translateY(-24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.bucket-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
 .bit-row {
   display: flex;
   align-items: center;
@@ -375,6 +491,10 @@ button:disabled {
   display: flex;
   /* grid-template-columns: repeat(4, 1fr); */
   gap: 12px;
+}
+
+.readings-stacked {
+  flex-direction: column;
 }
 
 .reading-cell {

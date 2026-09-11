@@ -140,30 +140,69 @@ stopBtn.addEventListener('click', async () => {
 // ---------------------------------------------------------------------------
 // Quantity (D0), range 1-5
 // ---------------------------------------------------------------------------
+let currentQuantity = 1; // tracked so the buckets know how many balls to draw
+
 qtySetBtn.addEventListener('click', async () => {
   showError('');
   const value = Number(qtyInput.value);
   const result = await window.plcAPI.setQuantity(value);
-  if (!result.ok) showError(`Set quantity failed: ${result.error}`);
+  if (!result.ok) {
+    showError(`Set quantity failed: ${result.error}`);
+    return;
+  }
+  currentQuantity = value; // optimistic — confirmed by the next poll's result.quantity
+  updateFillBuckets(currentFillDirection);
 });
 
 // ---------------------------------------------------------------------------
 // Filling direction (D2): One = -1, Two = +1
 // ---------------------------------------------------------------------------
+const bucketOneBalls = document.getElementById('bucketOneBalls');
+const bucketTwoBalls = document.getElementById('bucketTwoBalls');
+const bucketBothBalls = document.getElementById('bucketBothBalls');
+
+let currentFillDirection = null;
+
+// Fills a bucket with actual ball elements — one per unit of the current
+// Quantity (D0), not a solid liquid fill. `colors` is an array the same
+// length as the ball count is allowed to cycle through, e.g. ['red'] for
+// a single-color bucket or ['red','blue'] to alternate for "Both".
+function renderBalls(container, count, colors) {
+  container.innerHTML = '';
+  for (let i = 0; i < count; i++) {
+    const ball = document.createElement('div');
+    ball.className = `ball ${colors[i % colors.length]}`;
+    container.appendChild(ball);
+  }
+}
+
+// Shows exactly ONE ball in the active bucket (not scaled by Quantity) —
+// red for Filling One, blue for Filling Two, a single red/blue bicolor
+// ball for Filling Both. Inactive buckets stay empty.
+function updateFillBuckets(d2Value) {
+  currentFillDirection = d2Value;
+  renderBalls(bucketOneBalls, d2Value === -1 ? 1 : 0, ['red']);
+  renderBalls(bucketTwoBalls, d2Value === 1 ? 1 : 0, ['blue']);
+  renderBalls(bucketBothBalls, d2Value === 2 ? 1 : 0, ['mixed']);
+}
+
 fillOneBtn.addEventListener('click', async () => {
   showError('');
+  updateFillBuckets(-1); // optimistic — animates immediately, confirmed by the next poll
   const result = await window.plcAPI.setFillingDirection('one');
   if (!result.ok) showError(`Filling One failed: ${result.error}`);
 });
 
 fillTwoBtn.addEventListener('click', async () => {
   showError('');
+  updateFillBuckets(1);
   const result = await window.plcAPI.setFillingDirection('two');
   if (!result.ok) showError(`Filling Two failed: ${result.error}`);
 });
 
 fillBothBtn.addEventListener('click', async () => {
   showError('');
+  updateFillBuckets(2);
   const result = await window.plcAPI.setFillingDirection('both');
   if (!result.ok) showError(`Filling Both failed: ${result.error}`);
 });
@@ -392,6 +431,10 @@ window.plcAPI.onData((result) => {
   rfidValue.textContent = result.rfidTag || '--';
   statusValue.textContent = result.statusText || '--';
   fillDirValue.textContent = result.fillDirection ?? '--';
+  if (typeof result.quantity === 'number') {
+    currentQuantity = result.quantity;
+  }
+  updateFillBuckets(result.fillDirection);
 
   lastUpdate.textContent = `Last update: ${new Date(result.timestamp).toLocaleTimeString()}`;
 });

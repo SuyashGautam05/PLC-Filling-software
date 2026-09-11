@@ -1,7 +1,7 @@
 {
   "name": "mes-training-workbench",
   "productName": "Manufacturing Execution System (MES) Training WorkBench",
-  "version": "3.1.0",
+  "version": "1.0.0",
   "description": "Electron HMI for the filling machine...",
   "main": "main.js",
   "scripts": {

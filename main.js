@@ -29,28 +29,54 @@ const client = new ModbusRTU();
 // `client` object directly.
 // ---------------------------------------------------------------------------
 let modbusChain = Promise.resolve();
-function withLock(fn) {
-  const run = modbusChain.then(fn, fn);
+
+// Hard ceiling on any single Modbus request. Without this, if one request
+// ever hangs (network hiccup, PLC momentarily busy, the underlying
+// library's own timeout not cleanly rejecting for some reason), the
+// whole queue below would wait on it FOREVER — every future operation
+// (Start, Stop, the dashboard poll, the M57 trigger loop, everything)
+// queued behind it would then hang indefinitely too, since a JS promise
+// with no timeout just waits. This is very likely what "Start and other
+// buttons hang after a problem occurs" actually was: not anything
+// specific to blue-ball detection, but simply that a capture cycle is
+// when the most Modbus traffic happens at once, making a stuck request
+// more likely to occur right around then.
+const REQUEST_TIMEOUT_MS = 3000;
+
+function withTimeout(promise, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Modbus request timed out after ${REQUEST_TIMEOUT_MS}ms (${label})`));
+    }, REQUEST_TIMEOUT_MS);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
+}
+
+function withLock(fn, label) {
+  const run = modbusChain.then(() => withTimeout(Promise.resolve().then(fn), label), () => withTimeout(Promise.resolve().then(fn), label));
   modbusChain = run.then(() => {}, () => {});
   return run;
 }
 function mbReadCoils(address, count) {
-  return withLock(() => client.readCoils(address, count));
+  return withLock(() => client.readCoils(address, count), `readCoils(${address})`);
 }
 function mbReadHoldingRegisters(address, count) {
-  return withLock(() => client.readHoldingRegisters(address, count));
+  return withLock(() => client.readHoldingRegisters(address, count), `readHoldingRegisters(${address})`);
 }
 function mbWriteCoil(address, value) {
-  return withLock(() => client.writeCoil(address, value));
+  return withLock(() => client.writeCoil(address, value), `writeCoil(${address})`);
 }
 function mbWriteRegister(address, value) {
-  return withLock(() => client.writeRegister(address, value));
+  return withLock(() => client.writeRegister(address, value), `writeRegister(${address})`);
 }
 function mbConnectTCP(ip, options) {
-  return withLock(() => client.connectTCP(ip, options));
+  return withLock(() => client.connectTCP(ip, options), `connectTCP(${ip})`);
 }
 function mbClose() {
-  return withLock(() => new Promise((resolve) => client.close(resolve)));
+  return withLock(() => new Promise((resolve) => client.close(resolve)), 'close');
 }
 
 let pollTimer = null;
@@ -686,13 +712,33 @@ ipcMain.handle('camera:saveImage', async (event, dataUrl) => {
 
     const analysis = await analyzeImage(filePath);
 
+    // JS-side compensation for a known inconsistency in the Python
+    // analyzer's own decision logic: `fillStatus` can say "empty" even
+    // when `redBalls`/`blueBalls` (computed via a more lenient — and
+    // more correct — check with no extra percentage-of-cup-area gate)
+    // found a ball. Rather than trust `fillStatus` blindly, treat "a
+    // ball was actually counted" as the stronger signal and override
+    // fillStatus to "filled" when they disagree. This is intentionally
+    // NOT a Python change — analyze_box.py is being kept as-is.
+    let effectiveFillStatus = analysis.ok ? analysis.fillStatus : 'unknown';
+    if (analysis.ok && effectiveFillStatus !== 'filled') {
+      const ballsCounted = (analysis.redBalls > 0) || (analysis.blueBalls > 0);
+      if (ballsCounted) {
+        console.log(
+          `[fill-override] analyzer said fillStatus="${analysis.fillStatus}" but ` +
+          `redBalls=${analysis.redBalls} blueBalls=${analysis.blueBalls} — overriding to "filled".`
+        );
+        effectiveFillStatus = 'filled';
+      }
+    }
+
     // Strictly binary: filled = Pass, anything else (empty, or the cup
     // couldn't even be located in frame) = Reject. "unknown" is reserved
     // only for a genuine technical failure (the analyzer script crashed),
     // not a product state — when in doubt about the product, reject it.
     let classification = 'unknown';
     if (analysis.ok) {
-      if (analysis.fillStatus === 'filled') {
+      if (effectiveFillStatus === 'filled') {
         classification = 'pass';
         passCount += 1;
       } else {
@@ -736,7 +782,7 @@ ipcMain.handle('camera:saveImage', async (event, dataUrl) => {
     return {
       ok: true,
       path: filePath,
-      fillStatus: analysis.ok ? analysis.fillStatus : 'unknown',
+      fillStatus: effectiveFillStatus,
       confidence: analysis.ok ? analysis.confidence : null,
       classification,
       batchNumber,
@@ -852,6 +898,44 @@ function tryPython(candidates, index, imagePath, resolve) {
 // Spawns either the compiled exe (command=exe path, args=[imagePath]) or a
 // python interpreter (command=python, args=[scriptPath, imagePath]) and
 // parses its JSON stdout the same way either way.
+// If a specific frame ever causes the analyzer to hang instead of crash
+// cleanly, this guarantees it still gets killed and resolved instead of
+// leaving that one capture stuck forever (each capture is otherwise
+// independent of the Modbus queue, but there's no reason to let a stuck
+// analysis linger indefinitely either).
+const ANALYZER_TIMEOUT_MS = 10000;
+
+// The exact folder Python's own LOG_PATH will resolve to — computed the
+// same way Python does it (same directory as whichever file is actually
+// invoked). If you're running the compiled exe, this is NOT the same
+// folder as your source analyze_box.py — that mismatch (checking the
+// wrong folder) is the most common reason "the log isn't showing up".
+const EXPECTED_ANALYZER_LOG_PATH = path.join(path.dirname(COMPILED_ANALYZER_EXE), 'analyze_box.log');
+
+// A second, JS-side log that's ALWAYS in a guaranteed-writable, always-
+// findable location (Electron's userData folder) regardless of where
+// the analyzer binary/script lives or whether it can write next to
+// itself (e.g. if installed under Program Files without write access).
+// This captures stdout/stderr from every single run — a reliable
+// fallback even if Python's own file-based log is inaccessible or in an
+// unexpected location.
+const JS_SIDE_ANALYZER_LOG_PATH = path.join(app.getPath('userData'), 'analyzer-runs.log');
+
+console.log(`[analyzer] Expecting Python's own log at: ${EXPECTED_ANALYZER_LOG_PATH}`);
+console.log(`[analyzer] JS-side capture of every run's stdout/stderr at: ${JS_SIDE_ANALYZER_LOG_PATH}`);
+
+function appendJsSideAnalyzerLog(imagePath, stdout, stderr, exitInfo) {
+  const entry =
+    `\n----- ${new Date().toISOString()} -----\n` +
+    `image: ${imagePath}\n` +
+    `exit: ${exitInfo}\n` +
+    `stdout: ${stdout.trim() || '(empty)'}\n` +
+    `stderr: ${stderr.trim() || '(empty)'}\n`;
+  fs.appendFile(JS_SIDE_ANALYZER_LOG_PATH, entry, (err) => {
+    if (err) console.error('[analyzer] Failed to write JS-side analyzer log:', err.message);
+  });
+}
+
 function runAnalyzerProcess(command, args, resolve) {
   let proc;
   try {
@@ -863,21 +947,40 @@ function runAnalyzerProcess(command, args, resolve) {
 
   let stdout = '';
   let stderr = '';
+  let settled = false;
+  const imagePathArg = args[args.length - 1];
+
+  const timeoutTimer = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    proc.kill();
+    appendJsSideAnalyzerLog(imagePathArg, stdout, stderr, `killed after ${ANALYZER_TIMEOUT_MS}ms timeout`);
+    resolve({ ok: false, error: `Analyzer did not finish within ${ANALYZER_TIMEOUT_MS}ms — killed.` });
+  }, ANALYZER_TIMEOUT_MS);
+
+  const finish = (result) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeoutTimer);
+    resolve(result);
+  };
 
   proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
   proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
 
   proc.on('error', (err) => {
     // This candidate isn't installed/on PATH — caller may try the next one.
-    resolve({ ok: false, error: err.message, retryNextCandidate: true });
+    appendJsSideAnalyzerLog(imagePathArg, stdout, stderr, `spawn error: ${err.message}`);
+    finish({ ok: false, error: err.message, retryNextCandidate: true });
   });
 
   proc.on('close', (code) => {
+    appendJsSideAnalyzerLog(imagePathArg, stdout, stderr, `exit code ${code}`);
     if (code !== 0) {
       // Don't give up on the first bad candidate — a broken/stub
       // interpreter (e.g. Windows' python3 Store-alias trap) can exit
       // with a nonzero code instead of a clean spawn error.
-      resolve({
+      finish({
         ok: false,
         error: stderr.trim() || `analyzer exited with code ${code}`,
         retryNextCandidate: true,
@@ -887,12 +990,12 @@ function runAnalyzerProcess(command, args, resolve) {
     try {
       const parsed = JSON.parse(stdout.trim().split('\n').pop());
       if (parsed.error) {
-        resolve({ ok: false, error: parsed.error });
+        finish({ ok: false, error: parsed.error });
       } else {
-        resolve({ ok: true, ...parsed });
+        finish({ ok: true, ...parsed });
       }
     } catch (err) {
-      resolve({ ok: false, error: `Could not parse analyzer output: ${stdout || stderr}` });
+      finish({ ok: false, error: `Could not parse analyzer output: ${stdout || stderr}` });
     }
   });
 }
