@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session } = require('electron');
+const { app, BrowserWindow, ipcMain, session, dialog, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -62,6 +62,32 @@ let stopPulseTimer = null;
 let m57Prev = false;
 let lastCaptureTime = 0;
 
+// Continuously kept fresh by the regular dashboard poll (readAll()) below.
+// Used by capture logging instead of doing a brand-new isolated Modbus
+// read at capture time — that isolated read was the actual bug behind
+// "first RFID always shows 0000": the very first capture can happen
+// before even one dashboard poll cycle has completed, and a read on a
+// freshly-opened connection with no prior activity came back as the
+// PLC's uninitialized default. The dashboard poll will have already
+// succeeded at least once by the time any real capture is physically
+// possible, so reusing its last good value is both more reliable AND
+// faster (no extra Modbus round-trip per capture).
+let lastKnownRfid = '0000';
+
+// A "run" is one physical batch (e.g. "3 pieces", then "2 pieces", then
+// "5 pieces"). The PLC clears D50 back to 0000 when a new run starts and
+// only writes the real tag once that run's product is actually tagged/
+// completed — so we detect run boundaries directly from those RFID
+// transitions rather than guessing from a button press:
+//   0000 -> real value  : this run's tag just became known — backfill
+//                          every row logged so far in the CURRENT run
+//                          that's still showing 0000 with the real tag.
+//   real value -> 0000  : a NEW run is starting.
+// This is what makes "3 batch, then 2 batch, then 5 batch" distinguishable
+// in the CSV (via the Run column) instead of every row just showing
+// whatever RFID happened to be cached at that exact moment.
+let currentRunId = 1;
+
 // ---------------------------------------------------------------------------
 // Address map. This PLC exposes M (bit) and D (word) areas directly, and the
 // hardware's own element number IS the 0-based Modbus protocol address:
@@ -100,8 +126,7 @@ const ADDR = {
   PERFORMANCE_D902: 902,
   QUALITY_D904: 904,
   OEE_D906: 906,
-  OEE_RESET_M156: 156, // write-only pulse — ASSUMED address, adjust if wrong
-  OEE_RESET_M160: 160, // write-only pulse, HIGH for 1s, fired alongside M156 on Reset click
+  OEE_RESET_M160: 160, // write-only pulse, HIGH for 1s, fired on OEE Reset click
 };
 
 function scaleTime(raw) {
@@ -178,29 +203,112 @@ const PYTHON_CANDIDATES = [
   'C:\\Users\\Scientech 2652\\AppData\\Local\\Programs\\Python\\Python313\\python.exe',
 ];
 
-// Running good/bad tallies (white box = good, black box = bad).
-let goodCount = 0;
-let badCount = 0;
+// Running pass/reject tallies.
+let passCount = 0;
+let rejectCount = 0;
 let unknownCount = 0;
+
+// Production report log — one entry per capture, used for the Production
+// Reports CSV export. Batch numbers are auto-generated sequentially in
+// software (no PLC register was specified for this), starting at 1 and
+// incrementing per capture regardless of pass/reject outcome.
+let captureReportLog = [];
+let nextBatchNumber = 1;
+
+function nowInIST() {
+  return new Date().toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+}
 
 // How many consecutive 16-bit registers to pull for multi-register values.
 const STATUS_REG_COUNT = 8; // D1000 status text (ASCII, word order reversed, bytes swapped)
 const RFID_REG_COUNT = 1; // D50 RFID tag - single register, plain 4-digit number
 
+// App icon. __dirname is checked FIRST for the packaged case — with
+// asar:false and "logo.ico" listed in package.json's "files", it gets
+// copied to the same folder as main.js itself (resources/app/logo.ico),
+// which IS __dirname at runtime. process.resourcesPath (resources/ one
+// level up) is only where "extraResources" entries land, not "files"
+// entries — that mismatch was likely why earlier attempts kept failing.
+//
+// Uses nativeImage explicitly (not just a raw path string) and logs
+// loudly to the console if it can't find or can't load the file, so if
+// this is STILL broken after this fix, the console output on a
+// `npm start` run (or via `--enable-logging` on the packaged exe) will
+// say exactly why instead of silently showing nothing.
+function resolveAppIconPath() {
+  // We now look for icon.png (electron-builder handles the .ico generation automatically)
+  const candidates = app.isPackaged
+    ? [
+        // extraResources copy in packaged app
+        path.join(process.resourcesPath, 'icon.png'),
+        // asar:false unpacked copy
+        path.join(__dirname, 'build', 'icon.png'),
+      ]
+    : [
+        // Dev mode
+        path.join(__dirname, 'build', 'icon.png'),
+      ];
+
+  const found = candidates.find((p) => {
+    try { return fs.existsSync(p); } catch { return false; }
+  });
+  
+  if (!found) {
+    console.error(
+      '[icon] No icon file found. Checked:\n' + candidates.map((p) => `  - ${p}`).join('\n')
+    );
+  }
+  return found || candidates[0];
+}
+
+function resolveAppIcon() {
+  const iconPath = resolveAppIconPath();
+  try {
+    const image = nativeImage.createFromPath(iconPath);
+    if (image.isEmpty()) {
+      console.error(`[icon] nativeImage could not load file at ${iconPath}. Ensure it is a valid PNG.`);
+      return nativeImage.createEmpty();
+    }
+    console.log(`[icon] Loaded app icon from ${iconPath} (${image.getSize().width}x${image.getSize().height})`);
+    return image;
+  } catch (err) {
+    console.error(`[icon] Error loading icon:`, err);
+    return nativeImage.createEmpty();
+  }
+}
+
 function createWindow() {
+  const appIcon = resolveAppIcon();
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 820,
     resizable: true,
     backgroundColor: '#173681',
+    icon: appIcon,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       devTools: false
     },
-    icon: path.join(__dirname, 'logo.ico')
   });
+
+  // Redundant explicit call — on some Windows/Electron combinations the
+  // constructor's `icon` option alone doesn't reliably refresh the
+  // taskbar icon specifically, even though it works fine for the window
+  // titlebar. Calling setIcon() after creation covers that gap.
+  if (!appIcon.isEmpty()) {
+    mainWindow.setIcon(appIcon);
+  }
 
   mainWindow.setMenuBarVisibility(false);
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
@@ -375,6 +483,22 @@ async function readAll() {
     // dashboard read. This just reports the current M57 state for display.
     const cameraTriggerHigh = !!cameraRes.data[0];
 
+    const rfidTag = registersToDecimal(rfidRes.data);
+
+    if (rfidTag === '0000' && lastKnownRfid !== '0000') {
+      // Tag cleared by the PLC -> a new run is starting.
+      currentRunId += 1;
+    } else if (rfidTag !== '0000' && lastKnownRfid === '0000') {
+      // Tag just became known -> backfill every still-pending row from
+      // this run with the real value instead of leaving it as 0000.
+      captureReportLog.forEach((entry) => {
+        if (entry.runId === currentRunId && entry.rfid === '0000') {
+          entry.rfid = rfidTag;
+        }
+      });
+    }
+    lastKnownRfid = rfidTag; // keep the capture-time cache fresh
+
     return {
       ok: true,
       running: !!startRes.data[0],
@@ -385,7 +509,7 @@ async function readAll() {
       fillingOneLevel: fill1Res.data[0],
       fillingTwoLevel: fill2Res.data[0],
       statusText: registersToAscii(statusRes.data),
-      rfidTag: registersToDecimal(rfidRes.data),
+      rfidTag,
       cameraTriggerHigh,
       timestamp: new Date().toISOString(),
     };
@@ -487,16 +611,17 @@ ipcMain.handle('modbus:readOEE', async () => {
   }
 });
 
-// Momentary pulse, same pattern as Stop — write 1 then release after 300ms.
-// Also pulses M160 HIGH for exactly 1 second, in parallel.
+// Pulses M160 HIGH for exactly 1 second, and also resets the pass/reject/
+// unknown image tallies (M156 has been removed from this handler entirely
+// per request — only M160 fires now).
 ipcMain.handle('modbus:resetOEE', async () => {
   if (!client.isOpen) return { ok: false, error: 'Not connected to PLC' };
   try {
-    await mbWriteCoil(ADDR.OEE_RESET_M156, true);
-    pulseM160(); // fire-and-forget, runs alongside the M156 pulse below
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    await mbWriteCoil(ADDR.OEE_RESET_M156, false);
-    return { ok: true };
+    await pulseM160();
+    passCount = 0;
+    rejectCount = 0;
+    unknownCount = 0;
+    return { ok: true, counts: { pass: passCount, reject: rejectCount, unknown: unknownCount } };
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -561,23 +686,52 @@ ipcMain.handle('camera:saveImage', async (event, dataUrl) => {
 
     const analysis = await analyzeImage(filePath);
 
-    // Strictly binary: filled = good, anything else (empty, or the cup
-    // couldn't even be located in frame) = reject. "unknown" is reserved
+    // Strictly binary: filled = Pass, anything else (empty, or the cup
+    // couldn't even be located in frame) = Reject. "unknown" is reserved
     // only for a genuine technical failure (the analyzer script crashed),
     // not a product state — when in doubt about the product, reject it.
     let classification = 'unknown';
     if (analysis.ok) {
       if (analysis.fillStatus === 'filled') {
-        classification = 'good';
-        goodCount += 1;
+        classification = 'pass';
+        passCount += 1;
       } else {
-        classification = 'bad';
-        badCount += 1;
+        classification = 'reject';
+        rejectCount += 1;
         pulseBadImagePin(); // fire-and-forget — don't block the response on this
       }
     } else {
       unknownCount += 1;
     }
+
+    // Use the RFID value already kept fresh by the ongoing dashboard poll
+    // (see lastKnownRfid) rather than an isolated one-off read here — that
+    // isolated read was the actual cause of "first RFID always 0000": the
+    // very first capture can happen before even one dashboard poll cycle
+    // completes, and a read on a connection with no prior activity came
+    // back as the PLC's uninitialized default.
+    const rfidTag = lastKnownRfid;
+
+    // Fill One / Fill Two checkbox columns: whether a red ball (Filling
+    // One) / blue ball (Filling Two) was detected in this capture. This
+    // assumes Filling One = red, Filling Two = blue, matching the D2
+    // filling-direction naming used elsewhere in this app — flag if that
+    // assumption is wrong.
+    const fillOneDetected = analysis.ok ? (analysis.redBalls > 0) : false;
+    const fillTwoDetected = analysis.ok ? (analysis.blueBalls > 0) : false;
+
+    const batchNumber = nextBatchNumber++;
+    const statusLabel = classification === 'pass' ? 'Pass' : classification === 'reject' ? 'Reject' : 'Unknown';
+
+    captureReportLog.push({
+      runId: currentRunId,
+      batchNumber,
+      timestamp: nowInIST(),
+      fillOne: fillOneDetected,
+      fillTwo: fillTwoDetected,
+      rfid: rfidTag,
+      status: statusLabel,
+    });
 
     return {
       ok: true,
@@ -585,11 +739,13 @@ ipcMain.handle('camera:saveImage', async (event, dataUrl) => {
       fillStatus: analysis.ok ? analysis.fillStatus : 'unknown',
       confidence: analysis.ok ? analysis.confidence : null,
       classification,
+      batchNumber,
+      rfid: rfidTag,
       analysisNote: analysis.ok ? analysis.note : null,
       redBalls: analysis.ok ? analysis.redBalls : null,
       blueBalls: analysis.ok ? analysis.blueBalls : null,
       analysisError: analysis.ok ? null : analysis.error,
-      counts: { good: goodCount, bad: badCount, unknown: unknownCount },
+      counts: { pass: passCount, reject: rejectCount, unknown: unknownCount },
     };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -597,10 +753,63 @@ ipcMain.handle('camera:saveImage', async (event, dataUrl) => {
 });
 
 ipcMain.handle('camera:resetCounts', async () => {
-  goodCount = 0;
-  badCount = 0;
+  passCount = 0;
+  rejectCount = 0;
   unknownCount = 0;
-  return { ok: true, counts: { good: goodCount, bad: badCount, unknown: unknownCount } };
+  return { ok: true, counts: { pass: passCount, reject: rejectCount, unknown: unknownCount } };
+});
+
+// ---------------------------------------------------------------------------
+// Production Reports — CSV export of the capture log (Timestamp/IST,
+// Batch Number, Fill One, Fill Two, RFID, Status). Opens a native Save
+// dialog rather than a silent browser-style download, since this is a
+// desktop app. NOTE: CSV can't embed a real interactive Excel checkbox
+// form control — Fill One/Fill Two are written as TRUE/FALSE, which Excel
+// will happily open and let you filter/sort on, but they render as text,
+// not a clickable checkbox widget. A genuine clickable-checkbox .xlsx
+// would need a heavier library (e.g. exceljs) — say the word if that
+// level of fidelity is actually required.
+function buildReportCsv() {
+  // "Run" distinguishes separate physical batches (e.g. a run of 3
+  // pieces, then a run of 2, then a run of 5) — without it every row just
+  // looked identical/sequential with no way to tell which batch a given
+  // row belonged to.
+  const header = ['Timestamp (IST)', 'Run', 'Batch Number', 'Fill One', 'Fill Two', 'RFID', 'Status'];
+  const escapeCell = (v) => `"${String(v).replace(/"/g, '""')}"`;
+  const rows = captureReportLog.map((e) => [
+    e.timestamp,
+    e.runId,
+    e.batchNumber,
+    e.fillOne ? 'TRUE' : 'FALSE',
+    e.fillTwo ? 'TRUE' : 'FALSE',
+    e.rfid,
+    e.status,
+  ]);
+  return [header, ...rows].map((row) => row.map(escapeCell).join(',')).join('\r\n');
+}
+
+ipcMain.handle('reports:getSummary', async () => {
+  return { ok: true, totalEntries: captureReportLog.length };
+});
+
+ipcMain.handle('reports:download', async () => {
+  if (captureReportLog.length === 0) {
+    return { ok: false, error: 'No captures logged yet — nothing to export.' };
+  }
+  try {
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save Production Report',
+      defaultPath: `Production_Report_${Date.now()}.csv`,
+      filters: [{ name: 'CSV (opens in Excel)', extensions: ['csv'] }],
+    });
+    if (canceled || !filePath) {
+      return { ok: false, error: 'Save cancelled.' };
+    }
+    await fsp.writeFile(filePath, buildReportCsv(), 'utf8');
+    return { ok: true, path: filePath, totalEntries: captureReportLog.length };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
 
 // Runs the Python/OpenCV analyzer on a saved image and parses its JSON output.

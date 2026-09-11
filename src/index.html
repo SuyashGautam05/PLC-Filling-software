@@ -9,7 +9,7 @@
   <div class="app">
     <header>
       <div class="header-brand">
-        <img style="    width: 940px;" src="./assets/logowithname.png" alt="">
+        <img style="width: 900px;" src="./assets/logowithname.png" alt="">
         <!-- <svg class="brand-logo" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <circle cx="24" cy="24" r="22" fill="none" stroke="#e1ac3d" stroke-width="2.5" />
           <path d="M14 30 L14 20 L20 20 L20 15 L28 15 L28 20 L34 20 L34 30 Z" fill="#e1ac3d" />
@@ -22,161 +22,117 @@
         </div> -->
       </div>
       <div class="header-actions">
-        <button id="oeeOpenBtn" class="oee-btn" disabled>OEE Dashboard</button>
         <div id="statusBadge" class="status disconnected">Disconnected</div>
       </div>
     </header>
 
     <div class="page-content">
       <section class="config-panel">
-      <div class="field">
-        <label for="ip">PLC IP Address</label>
-        <input type="text" id="ip" value="192.168.0.190" />
+        <div class="field">
+          <label for="ip">PLC IP Address</label>
+          <input type="text" id="ip" value="192.168.0.190" />
+        </div>
+        <div class="field">
+          <label for="port">Port</label>
+          <input type="number" id="port" value="502" />
+        </div>
+        <div class="field" style="display:none">
+          <label for="slaveId">Slave ID</label>
+          <input type="number" id="slaveId" value="1" />
+        </div>
+        <div class="field" style="display:none">
+          <label for="interval">Poll Interval (ms)</label>
+          <input type="number" id="interval" value="100" />
+        </div>
+        <div class="field connect-actions">
+          <button id="connectBtn">Connect</button>
+          <button id="disconnectBtn" disabled>Disconnect</button>
+        </div>
+      </section>
+
+      <!-- Section navigation -->
+      <nav class="section-nav">
+        <button id="navProductSelection" class="nav-btn" disabled>Product Selection</button>
+        <button id="navOeeDashboard" class="nav-btn" disabled>OEE Dashboard</button>
+        <button id="navInventory" class="nav-btn" disabled>Inventory</button>
+        <button id="navProductionReports" class="nav-btn" disabled>Production Reports</button>
+      </nav>
+
+      <div class="grid">
+        <!-- Run controls (always visible) -->
+        <section class="card">
+          <h2>Run Control</h2>
+          <div class="run-controls">
+            <button id="startBtn" class="btn-start" disabled>
+              <span class="dot" id="startDot"></span> START (M100)
+            </button>
+            <button id="stopBtn" class="btn-stop" disabled>STOP (M101)</button>
+          </div>
+          <p class="hint">Start blinks M100 while running. Stop pulses the M101 NC contact low for 1s.</p>
+        </section>
+
+        <!-- Read-only readings (always visible) -->
+        <section class="card">
+          <h2>Live Readings (Read-Only)</h2>
+          <div class="readings">
+            <div class="reading-cell">
+              <div class="reading-name">RFID Tag (D50)</div>
+              <div class="reading-value" id="rfidValue">--</div>
+            </div>
+            <div class="reading-cell wide-cell">
+              <div class="reading-name">Status (D1000)</div>
+              <div class="reading-value" id="statusValue">--</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Camera / vision (always visible) -->
+        <section class="card wide">
+          <h2>Camera (M57 Trigger) &amp; Fill Detection</h2>
+
+          <div style="display: none;" id="resultBanner" class="result-banner idle">Waiting for first capture...</div>
+
+          <div class="camera-status-row">
+            <span>M57 state:</span>
+            <span id="m57Indicator" class="pill off">LOW</span>
+            <span id="captureLog">No captures yet.</span>
+          </div>
+
+          <div class="tally-row">
+            <div class="tally-cell good">
+              <div class="tally-label">Pass (Filled)</div>
+              <div class="tally-value" id="passCount">0</div>
+            </div>
+            <div class="tally-cell bad">
+              <div class="tally-label">Reject (Empty)</div>
+              <div class="tally-value" id="rejectCount">0</div>
+            </div>
+            <div class="tally-cell unknown">
+              <div class="tally-label">Unclassified</div>
+              <div class="tally-value" id="unknownCount">0</div>
+            </div>
+            <button style="display: none;" id="resetCountsBtn" class="reset-btn">Reset Counts</button>
+          </div>
+
+          <div class="last-result-row">
+            <img id="lastCaptureImg" class="capture-preview" alt="Last capture" />
+            <div class="last-result-details">
+              <div>Fill status: <span id="lastFillStatus" class="badge">--</span> <span id="lastFillConfidence" class="hint"></span></div>
+              <div>Status: <span id="lastClassification" class="badge">--</span></div>
+              <div>Balls detected — Red: <span id="lastRedBalls">--</span>, Blue: <span id="lastBlueBalls">--</span></div>
+            </div>
+          </div>
+
+          <video id="cameraVideo" autoplay muted playsinline style="display:none"></video>
+          <canvas id="captureCanvas" style="display:none"></canvas>
+        </section>
+
       </div>
-      <div class="field">
-        <label for="port">Port</label>
-        <input type="number" id="port" value="502" />
-      </div>
-      <div class="field">
-        <label for="slaveId">Slave ID</label>
-        <input type="number" id="slaveId" value="1" />
-      </div>
-      <div class="field">
-        <label for="interval">Poll Interval (ms)</label>
-        <input type="number" id="interval" value="200" />
-      </div>
-      <div class="field connect-actions">
-        <button id="connectBtn">Connect</button>
-        <button id="disconnectBtn" disabled>Disconnect</button>
-      </div>
-    </section>
 
-    <div class="grid">
-      <!-- Run controls -->
-      <section class="card">
-        <h2>Run Control</h2>
-        <div class="run-controls">
-          <button id="startBtn" class="btn-start" disabled>
-            <span class="dot" id="startDot"></span> START (M100)
-          </button>
-          <button id="stopBtn" class="btn-stop" disabled>STOP (M101)</button>
-        </div>
-        <p class="hint">Start blinks M100 while running. Stop pulses the M101 NC contact low for 1s.</p>
+      <section class="log">
+        <span id="lastUpdate">Last update: --</span>
+        <span id="errorMsg" class="error"></span>
       </section>
-
-      <!-- Quantity -->
-      <section class="card">
-        <h2>Quantity (D0)</h2>
-        <div class="qty-row">
-          <input type="number" id="qtyInput" min="1" max="5" value="1" />
-          <button id="qtySetBtn" disabled>Set</button>
-        </div>
-        <p class="hint">Allowed range: 1 &ndash; 5</p>
-      </section>
-
-      <!-- Filling direction -->
-      <section class="card">
-        <h2>Filling Direction (D2)</h2>
-        <div class="fill-dir-row">
-          <button id="fillOneBtn" disabled>Filling One (&minus;1)</button>
-          <button id="fillTwoBtn" disabled>Filling Two (+1)</button>
-          <button id="fillBothBtn" disabled>Filling Both (2)</button>
-        </div>
-        <p class="hint">Current D2 value: <span id="fillDirValue">--</span></p>
-      </section>
-
-      <!-- Bit controls -->
-      <section class="card">
-        <h2>Bit Controls</h2>
-        <div class="bit-row">
-          <span>Stock Refill (M153)</span>
-          <button id="refillPulseBtn" class="pulse-btn" disabled>PULSE</button>
-        </div>
-        <div class="bit-row">
-          <span>Filling One (M154)</span>
-          <button id="fill1PulseBtn" class="pulse-btn" disabled>PULSE</button>
-        </div>
-        <div class="bit-row">
-          <span>Filling Two (M155)</span>
-          <button id="fill2PulseBtn" class="pulse-btn" disabled>PULSE</button>
-        </div>
-      </section>
-
-      <!-- Read-only readings -->
-      <section class="card wide">
-        <h2>Live Readings (Read-Only)</h2>
-        <div class="readings">
-          <div class="reading-cell">
-            <div class="reading-name">Container Stock (D11)</div>
-            <div class="reading-value" id="stockValue">--</div>
-          </div>
-          <div class="reading-cell">
-            <div class="reading-name">Filling One Level (D12)</div>
-            <div class="reading-value" id="fill1Value">--</div>
-          </div>
-          <div class="reading-cell">
-            <div class="reading-name">Filling Two Level (D13)</div>
-            <div class="reading-value" id="fill2Value">--</div>
-          </div>
-          <div class="reading-cell">
-            <div class="reading-name">RFID Tag (D50)</div>
-            <div class="reading-value" id="rfidValue">--</div>
-          </div>
-          <div class="reading-cell wide-cell">
-            <div class="reading-name">Status (D1000)</div>
-            <div class="reading-value" id="statusValue">--</div>
-          </div>
-        </div>
-      </section>
-      <!-- Camera / vision -->
-      <section class="card wide">
-        <h2>Camera (M57 Trigger) &amp; Fill Detection</h2>
-
-        <!-- Big, unmissable pass/fail banner — updates the instant a
-             capture finishes analyzing, regardless of what M57 is doing
-             by then (analysis is async, so M57 may already be back LOW). -->
-        <div id="resultBanner" class="result-banner idle">Waiting for first capture...</div>
-
-        <div class="camera-status-row">
-          <span>M57 state:</span>
-          <span id="m57Indicator" class="pill off">LOW</span>
-          <span id="captureLog">No captures yet.</span>
-        </div>
-
-        <div class="tally-row">
-          <div class="tally-cell good">
-            <div class="tally-label">Good (Filled)</div>
-            <div class="tally-value" id="goodCount">0</div>
-          </div>
-          <div class="tally-cell bad">
-            <div class="tally-label">Bad (Empty)</div>
-            <div class="tally-value" id="badCount">0</div>
-          </div>
-          <div class="tally-cell unknown">
-            <div class="tally-label">Unclassified</div>
-            <div class="tally-value" id="unknownCount">0</div>
-          </div>
-          <button id="resetCountsBtn" class="reset-btn">Reset Counts</button>
-        </div>
-
-        <div class="last-result-row">
-          <img id="lastCaptureImg" class="capture-preview" alt="Last capture" />
-          <div class="last-result-details">
-            <div>Fill status: <span id="lastFillStatus" class="badge">--</span> <span id="lastFillConfidence" class="hint"></span></div>
-            <div>Classification: <span id="lastClassification" class="badge">--</span></div>
-            <div>Balls detected — Red: <span id="lastRedBalls">--</span>, Blue: <span id="lastBlueBalls">--</span></div>
-          </div>
-        </div>
-
-        <video id="cameraVideo" autoplay muted playsinline style="display:none"></video>
-        <canvas id="captureCanvas" style="display:none"></canvas>
-      </section>
-    </div>
-
-    <section class="log">
-      <span id="lastUpdate">Last update: --</span>
-      <span id="errorMsg" class="error"></span>
-    </section>
     </div>
   </div>
 
@@ -242,6 +198,104 @@
 
       <div class="oee-modal-log">
         <span id="oeeError" class="error"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Product Selection popup -->
+  <div id="productSelectionOverlay" class="oee-overlay" style="display:none">
+    <div class="oee-modal">
+      <div class="oee-modal-header">
+        <h2>Product Selection</h2>
+        <button id="productSelectionCloseBtn" class="oee-close-btn">BACK</button>
+      </div>
+      <div class="modal-body">
+        <div class="sub-card">
+          <h3>Quantity (D0)</h3>
+          <div class="qty-row">
+            <input type="number" id="qtyInput" min="1" max="5" value="1" />
+            <button id="qtySetBtn" disabled>Set</button>
+          </div>
+          <p class="hint">Allowed range: 1 &ndash; 5</p>
+        </div>
+        <div class="sub-card">
+          <h3>Filling Direction (D2)</h3>
+          <div class="fill-dir-row">
+            <button id="fillOneBtn" disabled>Filling One (&minus;1)</button>
+            <button id="fillTwoBtn" disabled>Filling Two (+1)</button>
+            <button id="fillBothBtn" disabled>Filling Both (2)</button>
+          </div>
+          <p class="hint">Current D2 value: <span id="fillDirValue">--</span></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Inventory popup -->
+  <div id="inventoryOverlay" class="oee-overlay" style="display:none">
+    <div class="oee-modal">
+      <div class="oee-modal-header">
+        <h2>Inventory</h2>
+        <button id="inventoryCloseBtn" class="oee-close-btn">BACK</button>
+      </div>
+      <div class="modal-body">
+        <div class="sub-card">
+          <h3>Bit Controls</h3>
+          <div class="bit-row">
+            <span>Stock Refill (M153)</span>
+            <button id="refillPulseBtn" class="pulse-btn" disabled>RESET</button>
+          </div>
+          <div class="bit-row">
+            <span>Filling One (M154)</span>
+            <button id="fill1PulseBtn" class="pulse-btn" disabled>RESET</button>
+          </div>
+          <div class="bit-row">
+            <span>Filling Two (M155)</span>
+            <button id="fill2PulseBtn" class="pulse-btn" disabled>RESET</button>
+          </div>
+        </div>
+        <div class="sub-card">
+          <h3>Stock Levels</h3>
+          <div class="readings">
+            <div class="reading-cell">
+              <div class="reading-name">Container Stock (D11)</div>
+              <div class="reading-value" id="stockValue">--</div>
+            </div>
+            <div class="reading-cell">
+              <div class="reading-name">Filling One Level (D12)</div>
+              <div class="reading-value" id="fill1Value">--</div>
+            </div>
+            <div class="reading-cell">
+              <div class="reading-name">Filling Two Level (D13)</div>
+              <div class="reading-value" id="fill2Value">--</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Production Reports popup -->
+  <div id="reportsOverlay" class="oee-overlay" style="display:none">
+    <div class="oee-modal">
+      <div class="oee-modal-header">
+        <h2>Production Reports</h2>
+        <button id="reportsCloseBtn" class="oee-close-btn">BACK</button>
+      </div>
+      <div class="modal-body">
+        <p class="hint">
+          Every capture (Pass or Reject) is logged automatically with its batch number,
+          timestamp (IST), RFID tag, and which fill balls were detected. Export the full
+          log as a CSV file (opens directly in Excel) — columns: Timestamp (IST), Batch
+          Number, Fill One, Fill Two, RFID, Status.
+        </p>
+        <div class="report-summary-row">
+          <span>Logged entries: <strong id="reportEntryCount">0</strong></span>
+          <button id="downloadReportBtn" class="reset-btn" disabled>Download Excel Report</button>
+        </div>
+        <div class="oee-modal-log">
+          <span id="reportError" class="error"></span>
+        </div>
       </div>
     </div>
   </div>

@@ -33,8 +33,8 @@ const lastCaptureImg = document.getElementById('lastCaptureImg');
 const cameraVideo = document.getElementById('cameraVideo');
 const captureCanvas = document.getElementById('captureCanvas');
 
-const goodCountEl = document.getElementById('goodCount');
-const badCountEl = document.getElementById('badCount');
+const passCountEl = document.getElementById('passCount');
+const rejectCountEl = document.getElementById('rejectCount');
 const unknownCountEl = document.getElementById('unknownCount');
 const resetCountsBtn = document.getElementById('resetCountsBtn');
 const lastFillStatus = document.getElementById('lastFillStatus');
@@ -42,6 +42,23 @@ const lastFillConfidence = document.getElementById('lastFillConfidence');
 const lastClassification = document.getElementById('lastClassification');
 const lastRedBalls = document.getElementById('lastRedBalls');
 const lastBlueBalls = document.getElementById('lastBlueBalls');
+
+// Section navigation
+const navProductSelection = document.getElementById('navProductSelection');
+const navOeeDashboard = document.getElementById('navOeeDashboard');
+const navInventory = document.getElementById('navInventory');
+const navProductionReports = document.getElementById('navProductionReports');
+const productSelectionOverlay = document.getElementById('productSelectionOverlay');
+const productSelectionCloseBtn = document.getElementById('productSelectionCloseBtn');
+const inventoryOverlay = document.getElementById('inventoryOverlay');
+const inventoryCloseBtn = document.getElementById('inventoryCloseBtn');
+const reportsOverlay = document.getElementById('reportsOverlay');
+const reportsCloseBtn = document.getElementById('reportsCloseBtn');
+
+// Production Reports
+const reportEntryCount = document.getElementById('reportEntryCount');
+const downloadReportBtn = document.getElementById('downloadReportBtn');
+const reportError = document.getElementById('reportError');
 
 let captureCount = 0;
 let cameraReady = false;
@@ -68,7 +85,11 @@ function setConnectedUI(connected) {
   connectBtn.disabled = connected;
   disconnectBtn.disabled = !connected;
 
-  [startBtn, stopBtn, qtySetBtn, fillOneBtn, fillTwoBtn, fillBothBtn, oeeOpenBtn, refillPulseBtn, fill1PulseBtn, fill2PulseBtn].forEach((btn) => {
+  [
+    startBtn, stopBtn, qtySetBtn, fillOneBtn, fillTwoBtn, fillBothBtn,
+    refillPulseBtn, fill1PulseBtn, fill2PulseBtn,
+    navProductSelection, navOeeDashboard, navInventory, navProductionReports,
+  ].forEach((btn) => {
     btn.disabled = !connected;
   });
 
@@ -180,6 +201,64 @@ bindPulseButton(fill1PulseBtn, 'fill1', 'Filling One');
 bindPulseButton(fill2PulseBtn, 'fill2', 'Filling Two');
 
 // ---------------------------------------------------------------------------
+// Section navigation — every button (Product Selection / OEE Dashboard /
+// Inventory / Production Reports) opens as a popup modal, same pattern as
+// each other: fixed overlay + centered box + BACK button + click-outside
+// or BACK to close.
+// ---------------------------------------------------------------------------
+function openModal(overlayEl) {
+  overlayEl.style.display = 'flex';
+}
+
+function closeModal(overlayEl) {
+  overlayEl.style.display = 'none';
+}
+
+function bindModal(navBtn, overlayEl, closeBtn, onOpen) {
+  navBtn.addEventListener('click', () => {
+    openModal(overlayEl);
+    if (onOpen) onOpen();
+  });
+  closeBtn.addEventListener('click', () => closeModal(overlayEl));
+  overlayEl.addEventListener('click', (e) => {
+    if (e.target === overlayEl) closeModal(overlayEl);
+  });
+}
+
+bindModal(navProductSelection, productSelectionOverlay, productSelectionCloseBtn);
+bindModal(navInventory, inventoryOverlay, inventoryCloseBtn);
+bindModal(navProductionReports, reportsOverlay, reportsCloseBtn, refreshReportSummary);
+
+navOeeDashboard.addEventListener('click', openOeeModal);
+
+// ---------------------------------------------------------------------------
+// Production Reports
+// ---------------------------------------------------------------------------
+async function refreshReportSummary() {
+  const result = await window.plcAPI.getReportSummary();
+  if (result.ok) {
+    reportEntryCount.textContent = result.totalEntries;
+    downloadReportBtn.disabled = !isConnected || result.totalEntries === 0;
+  }
+}
+
+downloadReportBtn.addEventListener('click', async () => {
+  reportError.textContent = '';
+  downloadReportBtn.disabled = true;
+  try {
+    const result = await window.plcAPI.downloadReport();
+    if (result.ok) {
+      reportError.textContent = '';
+      captureLog.textContent = `Report saved: ${result.path} (${result.totalEntries} entries)`;
+    } else {
+      reportError.textContent = result.error;
+    }
+  } finally {
+    downloadReportBtn.disabled = !isConnected;
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Camera: request the webcam once at startup, keep the <video> element fed.
 // ---------------------------------------------------------------------------
 async function initCamera() {
@@ -219,40 +298,54 @@ async function captureImage() {
   if (result.ok) {
     lastFillStatus.textContent = result.fillStatus || '--';
     lastFillConfidence.textContent = result.confidence != null ? `(${result.confidence}% coloured)` : '';
-    lastClassification.textContent = result.classification || '--';
+    lastClassification.textContent = statusLabel(result.classification);
     lastRedBalls.textContent = result.redBalls ?? '--';
     lastBlueBalls.textContent = result.blueBalls ?? '--';
 
     if (result.counts) {
-      goodCountEl.textContent = result.counts.good;
-      badCountEl.textContent = result.counts.bad;
+      passCountEl.textContent = result.counts.pass;
+      rejectCountEl.textContent = result.counts.reject;
       unknownCountEl.textContent = result.counts.unknown;
     }
 
     updateResultBanner(result.classification);
 
+    // Every capture updates the Production Reports entry count too, so
+    // it stays fresh if that popup happens to already be open.
+    if (reportsOverlay.style.display !== 'none') {
+      refreshReportSummary();
+    } else {
+      downloadReportBtn.disabled = !isConnected; // will be re-checked when the popup opens
+    }
+
     // Analysis errors/notes go in captureLog, NOT the shared error banner —
     // the dashboard poll clears that banner every ~800ms, so a real error
     // here would flash and disappear before it could ever be read.
     if (result.analysisError) {
-      captureLog.textContent = `Capture #${captureCount} saved, but analysis FAILED: ${result.analysisError}`;
+      captureLog.textContent = `Capture #${captureCount} (Batch ${result.batchNumber}) saved, but analysis FAILED: ${result.analysisError}`;
     } else if (result.analysisNote) {
-      captureLog.textContent = `Capture #${captureCount} saved: ${result.path} — Note: ${result.analysisNote}`;
+      captureLog.textContent = `Capture #${captureCount} (Batch ${result.batchNumber}) saved: ${result.path} — Note: ${result.analysisNote}`;
     } else {
-      captureLog.textContent = `Capture #${captureCount} saved: ${result.path}`;
+      captureLog.textContent = `Capture #${captureCount} (Batch ${result.batchNumber}) saved: ${result.path}`;
     }
   } else {
     captureLog.textContent = `Capture #${captureCount} taken, but save failed: ${result.error}`;
   }
 }
 
+function statusLabel(classification) {
+  if (classification === 'pass') return 'Pass';
+  if (classification === 'reject') return 'Reject';
+  return 'Unknown';
+}
+
 function updateResultBanner(classification) {
   resultBanner.classList.remove('idle', 'good', 'bad', 'unknown');
-  if (classification === 'good') {
-    resultBanner.textContent = `✓ GOOD — Capture #${captureCount}: box filled correctly`;
+  if (classification === 'pass') {
+    resultBanner.textContent = `✓ PASS — Capture #${captureCount}: box filled correctly`;
     resultBanner.classList.add('good');
-  } else if (classification === 'bad') {
-    resultBanner.textContent = `✗ REJECTED — Capture #${captureCount}: box empty`;
+  } else if (classification === 'reject') {
+    resultBanner.textContent = `✗ REJECT — Capture #${captureCount}: box empty`;
     resultBanner.classList.add('bad');
   } else {
     resultBanner.textContent = `? UNKNOWN — Capture #${captureCount}: could not classify`;
@@ -263,8 +356,8 @@ function updateResultBanner(classification) {
 resetCountsBtn.addEventListener('click', async () => {
   const result = await window.plcAPI.resetCounts();
   if (result.ok) {
-    goodCountEl.textContent = result.counts.good;
-    badCountEl.textContent = result.counts.bad;
+    passCountEl.textContent = result.counts.pass;
+    rejectCountEl.textContent = result.counts.reject;
     unknownCountEl.textContent = result.counts.unknown;
   }
 });
@@ -306,7 +399,6 @@ window.plcAPI.onData((result) => {
 // ---------------------------------------------------------------------------
 // OEE Dashboard
 // ---------------------------------------------------------------------------
-const oeeOpenBtn = document.getElementById('oeeOpenBtn');
 const oeeCloseBtn = document.getElementById('oeeCloseBtn');
 const oeeOverlay = document.getElementById('oeeOverlay');
 const oeeResetBtn = document.getElementById('oeeResetBtn');
@@ -409,18 +501,25 @@ function closeOeeModal() {
   }
 }
 
-oeeOpenBtn.addEventListener('click', openOeeModal);
 oeeCloseBtn.addEventListener('click', closeOeeModal);
 oeeOverlay.addEventListener('click', (e) => {
   if (e.target === oeeOverlay) closeOeeModal();
 });
 
+// Reset also clears the on-screen Pass/Reject/Unknown image tallies, to
+// match the counts main.js resets server-side (M156 is no longer part of
+// this at all — only M160 pulses now).
 oeeResetBtn.addEventListener('click', async () => {
   showOeeError('');
   const result = await window.plcAPI.resetOEE();
   if (!result.ok) {
     showOeeError(`Reset failed: ${result.error}`);
     return;
+  }
+  if (result.counts) {
+    passCountEl.textContent = result.counts.pass;
+    rejectCountEl.textContent = result.counts.reject;
+    unknownCountEl.textContent = result.counts.unknown;
   }
   refreshOEE();
 });

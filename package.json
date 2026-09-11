@@ -1,8 +1,8 @@
 {
   "name": "mes-training-workbench",
   "productName": "Manufacturing Execution System (MES) Training WorkBench",
-  "version": "2.1.0",
-  "description": "Electron HMI for the filling machine — Modbus TCP control of start/stop, quantity, filling direction, stock refill, status/RFID readback, OEE dashboard, and a rule-based (no training required) red/blue ball fill detector that pulses M69 for 1s on a rejected/empty capture. The fill detector runs as a compiled standalone exe (scripts/dist/analyze_box.exe, built with PyInstaller — see scripts/BUILD_STANDALONE_EXE.md) with no Python install required on the target machine; falls back to spawning system Python only if that exe is missing.",
+  "version": "3.1.0",
+  "description": "Electron HMI for the filling machine...",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -21,6 +21,9 @@
   "build": {
     "appId": "com.scientech.mestrainingworkbench",
     "productName": "Manufacturing Execution System (MES) Training WorkBench",
+    "directories": {
+      "buildResources": "build"
+    },
     "asar": false,
     "files": [
       "main.js",
@@ -37,20 +40,26 @@
     ],
     "extraResources": [
       {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      },
+      {
         "from": "scripts/dist/analyze_box",
         "to": "analyze_box"
       }
     ],
     "win": {
       "target": "nsis",
-      "icon": "logo.ico"
+      "icon": "build/icon.png"
     },
     "nsis": {
       "artifactName": "${productName}-Setup-${version}.${ext}",
-      "shortcutName": "${productName}",
-      "uninstallDisplayName": "${productName}",
+      "shortcutName": "MES Training WorkBench",
+      "uninstallDisplayName": "MES Training WorkBench",
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     },
     "linux": {
       "target": "AppImage",

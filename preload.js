@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('plcAPI', {
   readOEE: () => ipcRenderer.invoke('modbus:readOEE'),
   resetOEE: () => ipcRenderer.invoke('modbus:resetOEE'),
 
+  getReportSummary: () => ipcRenderer.invoke('reports:getSummary'),
+  downloadReport: () => ipcRenderer.invoke('reports:download'),
+
   onData: (callback) => {
     ipcRenderer.removeAllListeners('modbus:data');
     ipcRenderer.on('modbus:data', (event, data) => callback(data));
